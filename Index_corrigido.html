@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{font-family:Arial,sans-serif;color:#17252d;background:#f3f7f8}*{box-sizing:border-box}
+body{margin:0;padding:22px}.wrap{max-width:1100px;margin:auto}.head{background:#143c4a;color:white;border-radius:16px;padding:22px;margin-bottom:18px}
+h1{font-size:25px;margin:0 0 6px}.sub{opacity:.85}.card{background:white;border:1px solid #dbe5e8;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 2px 8px #153d4a0d}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.field{display:flex;flex-direction:column;gap:6px;margin-bottom:13px}
+label{font-size:13px;font-weight:700;color:#41555e}input,select,textarea{font:inherit;padding:11px;border:1px solid #c8d5da;border-radius:9px;background:white;width:100%}
+button,.link{border:0;border-radius:9px;padding:11px 15px;background:#176b57;color:white;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}
+button.secondary{background:#e7eff1;color:#203b45}.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.muted{color:#637781;font-size:13px}.status{padding:12px;border-radius:9px;margin-top:12px;display:none}.ok{background:#e2f5e9;color:#17683b}.err{background:#fde9e7;color:#a3231a}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.kpi{padding:15px;border-radius:12px;background:#edf5f5}.kpi b{font-size:24px;display:block;margin-top:5px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-bottom:1px solid #e5ecee}th{background:#f3f7f8}.scroll{overflow:auto}
+@media(max-width:760px){body{padding:12px}.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.head{padding:17px}}
+</style></head>
+<body><div class="wrap">
+<header class="head"><h1 id="title">Indicadores Setoriais</h1><div class="sub">Registro diário e acompanhamento mensal · Hospital Serrano e BIO Imagem</div></header>
+<div id="formPage" class="card" style="display:none">
+<h2>Novo lançamento</h2><p class="muted">Registre um indicador por envio. Use números agregados do setor; não informe nome, CPF, diagnóstico ou outros dados identificáveis de pacientes.</p>
+<form id="entryForm" onsubmit="submitForm(event)">
+<div class="grid">
+<div class="field"><label for="date">Data do indicador *</label><input id="date" type="date" required></div>
+<div class="field"><label for="sector">Setor *</label><select id="sector" required></select></div>
+<div class="field"><label for="indicator">Indicador *</label><select id="indicator" required></select></div>
+<div class="field"><label for="value">Valor observado *</label><input id="value" type="number" step="any" required placeholder="Ex.: 42"></div>
+<div class="field"><label for="target">Meta (opcional)</label><input id="target" type="number" step="any" placeholder="Ex.: 50"></div>
+<div class="field"><label for="unit">Unidade</label><select id="unit"><option>Quantidade</option><option>Atendimentos</option><option>Ligações</option><option>Percentual (%)</option><option>Horas</option><option>Minutos</option><option>Vagas</option><option>Guias</option><option>Visitas</option></select></div>
+</div>
+<div class="grid" style="grid-template-columns:2fr 1fr">
+<div class="field"><label for="note">Observação (opcional)</label><textarea id="note" rows="2" maxlength="500" placeholder="Contexto breve, sem dados pessoais de pacientes"></textarea></div>
+<div class="field"><label for="who">Responsável pelo lançamento *</label><input id="who" required maxlength="120" placeholder="Nome ou e-mail corporativo"></div>
+</div>
+<div class="row"><button type="submit" id="send">Salvar lançamento</button><button type="button" class="secondary" onclick="clearForm()">Limpar</button><button type="button" class="secondary" onclick="goDashboard()">Voltar ao painel</button></div>
+<div id="formStatus" class="status"></div>
+</form></div>
+<div id="dashPage" style="display:none">
+<div class="card"><div class="row">
+<div class="field" style="min-width:200px;margin:0"><label for="month">Mês de referência</label><input id="month" type="month"></div>
+<div class="field" style="min-width:220px;margin:0"><label for="filterSector">Setor</label><select id="filterSector"><option value="">Todos os setores</option></select></div>
+<button onclick="loadDashboard()">Atualizar painel</button>
+<a id="formLink" class="link" href="?page=form">Novo lançamento</a>
+</div></div>
+<div class="kpis" id="kpis"></div>
+<div class="card"><h2>Resumo por indicador</h2><p class="muted">Soma dos lançamentos do mês selecionado. Quando uma meta for informada, o painel mostra o valor de referência registrado nos lançamentos.</p><div class="scroll"><table><thead><tr><th>Setor</th><th>Indicador</th><th>Resultado</th><th>Meta mais recente</th><th>Registros</th></tr></thead><tbody id="summary"></tbody></table></div></div>
+<div class="card"><h2>Últimos lançamentos</h2><div class="scroll"><table><thead><tr><th>Data</th><th>Setor</th><th>Indicador</th><th>Valor</th><th>Responsável</th></tr></thead><tbody id="recent"></tbody></table></div></div>
+</div>
+<div id="loading" class="card">Carregando configuração…</div>
+<script>
+const PAGE = <?!= JSON.stringify(page) ?>;
+const INITIAL_SECTOR = <?!= JSON.stringify(initialSector) ?>;
+let DATA = {rows:[],sectors:[],indicators:{}};
+const $ = id => document.getElementById(id);
+function setToday(){ $('date').value = new Date().toLocaleDateString('en-CA'); }
+function safe(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function showStatus(msg,ok){const el=$('formStatus');el.textContent=msg;el.className='status '+(ok?'ok':'err');el.style.display='block';}
+function fillSectors(){
+ const opts=DATA.sectors.map(s=>`<option value="${safe(s)}">${safe(s)}</option>`).join('');
+ $('sector').innerHTML='<option value="">Selecione…</option>'+opts;
+ $('filterSector').innerHTML='<option value="">Todos os setores</option>'+opts;
+ if(INITIAL_SECTOR && DATA.sectors.includes(INITIAL_SECTOR)) $('sector').value=INITIAL_SECTOR;
+ fillIndicators();
+}
+function fillIndicators(){
+ const sector=$('sector').value;
+ $('indicator').innerHTML='<option value="">Selecione…</option>'+(DATA.indicators[sector]||[]).map(x=>`<option value="${safe(x)}">${safe(x)}</option>`).join('');
+}
+function init(){
+ if(!window.google||!google.script||!google.script.run){$('loading').textContent='Erro: abra esta página pelo link publicado do Apps Script, terminado em /exec.';return;}
+ google.script.run.withSuccessHandler(cfg=>{
+   DATA.sectors=cfg.sectors;DATA.indicators=cfg.indicators; $('loading').style.display='none';
+   if(PAGE==='form'){
+     $('formPage').style.display='block';$('title').textContent='Formulário de Indicadores Setoriais';
+     setToday();fillSectors();$('sector').addEventListener('change',fillIndicators);
+     
+   } else {
+     $('dashPage').style.display='block';$('title').textContent='Painel de Indicadores Setoriais';
+     $('month').value=new Date().toISOString().slice(0,7);fillSectors();loadDashboard();
+   }
+ }).withFailureHandler(err=>{$('loading').textContent='Erro ao carregar configuração: '+errorMessage(err);}).getConfig();
+}
+function errorMessage(err){return err && err.message ? err.message : String(err || 'Erro desconhecido');}
+function clearForm(){
+ $('entryForm').reset();setToday();fillIndicators();$('formStatus').style.display='none';
+}
+function goDashboard(){
+ const url=new URL(window.location.href);url.searchParams.set('page','dashboard');url.searchParams.delete('sector');window.location.href=url.toString();
+}
+function submitForm(ev){
+ ev.preventDefault();
+ const btn=$('send');btn.disabled=true;btn.textContent='Salvando…';
+ const entry={date:$('date').value,sector:$('sector').value,indicator:$('indicator').value,value:$('value').value,target:$('target').value,unit:$('unit').value,note:$('note').value,who:$('who').value};
+ function finish(){btn.disabled=false;btn.textContent='Salvar lançamento';}
+ try{
+  if(!window.google||!google.script||!google.script.run) throw new Error('Abra o formulário pelo link publicado do Aplicativo da Web do Google Apps Script (URL terminada em /exec).');
+  google.script.run.withSuccessHandler(res=>{
+   finish();
+   if(!res||res.ok!==true){showStatus('O sistema não confirmou o salvamento. Confira a aba Lançamentos na planilha.',false);return;}
+   showStatus(res.message||'Lançamento salvo com sucesso.',true);$('value').value='';$('note').value='';$('target').value='';
+  }).withFailureHandler(err=>{finish();showStatus('Erro ao salvar: '+errorMessage(err),false);}).submitEntry(entry);
+ }catch(err){finish();showStatus('Erro no formulário: '+errorMessage(err),false);}
+}
+function loadDashboard(){
+ google.script.run.withSuccessHandler(data=>{
+   DATA.rows=data.rows||[];
+   const month=$('month').value, sector=$('filterSector').value;
+   const rows=DATA.rows.filter(r=>r.date.slice(0,7)===month&&(!sector||r.sector===sector));
+   const sum=rows.reduce((a,r)=>a+r.value,0), count=rows.length, sectors=new Set(rows.map(r=>r.sector)).size;
+   $('kpis').innerHTML=`<div class="kpi">Lançamentos no mês<b>${count}</b></div><div class="kpi">Setores com registros<b>${sectors}</b></div><div class="kpi">Indicadores registrados<b>${new Set(rows.map(r=>r.sector+'|'+r.indicator)).size}</b></div><div class="kpi">Soma dos valores lançados<b>${sum.toLocaleString('pt-BR',{maximumFractionDigits:2})}</b></div>`;
+   const groups={}; rows.forEach(r=>{const k=r.sector+'|||'+r.indicator;if(!groups[k])groups[k]={sector:r.sector,indicator:r.indicator,value:0,count:0,target:null,date:''};groups[k].value+=r.value;groups[k].count++;if(r.target!==null){if(!groups[k].date||r.date>=groups[k].date){groups[k].target=r.target;groups[k].date=r.date;}}});
+   const summary=Object.values(groups).sort((a,b)=>a.sector.localeCompare(b.sector)||a.indicator.localeCompare(b.indicator));
+   $('summary').innerHTML=summary.map(r=>`<tr><td>${safe(r.sector)}</td><td>${safe(r.indicator)}</td><td>${r.value.toLocaleString('pt-BR',{maximumFractionDigits:2})}</td><td>${r.target===null?'—':r.target.toLocaleString('pt-BR',{maximumFractionDigits:2})}</td><td>${r.count}</td></tr>`).join('')||'<tr><td colspan="5">Nenhum lançamento para este período.</td></tr>';
+   $('recent').innerHTML=rows.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30).map(r=>`<tr><td>${safe(r.date.split('-').reverse().join('/'))}</td><td>${safe(r.sector)}</td><td>${safe(r.indicator)}</td><td>${r.value.toLocaleString('pt-BR',{maximumFractionDigits:2})} ${safe(r.unit)}</td><td>${safe(r.who)}</td></tr>`).join('')||'<tr><td colspan="5">Nenhum lançamento para este período.</td></tr>';
+   $('formLink').href='?page=form'+(sector?'&sector='+encodeURIComponent(sector):'');
+ }).withFailureHandler(err=>alert('Erro ao atualizar painel: '+err.message)).getDashboardData($('month').value);
+}
+if(PAGE==='form') document.body.dataset.page='form';
+init();
+</script></div></body></html>
